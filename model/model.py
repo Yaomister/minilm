@@ -48,13 +48,13 @@ class Model(nn.Module):
         self._reset_cache()
 
         if self.use_cache:
-            logits = self.forward(indexes[:, -self.block_size :])
+            logits = self.forward(indexes[:, -self.block_size :], use_cache=True)
             for _ in range(maximum_new_tokens):
                 next_index = logits.argmax(dim=-1, keepdim=True)
                 indexes = torch.cat([indexes, next_index], dim=1)
                 if next_index.item() == self.eot_token_id:
                     break
-                logits, _ = self.forward(next_index)
+                logits, _ = self.forward(next_index, use_cache=True)
         else:
             for _ in range(maximum_new_tokens):
                 logits, _ = self.forward(indexes)
@@ -68,11 +68,12 @@ class Model(nn.Module):
         parameters = sum(p.numel() for p in self.parameters())
         return 6 * parameters + 12 * self.n_embedding * self.block_size * self.n_head
 
-    def forward(self, x, targets=None):
+    def forward(self, x, targets=None, use_cache=False):
 
         _, sequence_length = x.size()
 
-        if self.use_cache:
+        # the kv cache is only for generation, training and evaluation always run without it
+        if use_cache:
             p = torch.arange(
                 self.current_position,
                 self.current_position + sequence_length,
@@ -89,7 +90,7 @@ class Model(nn.Module):
         x = self.transformer.drop(token_embeddings + position_embeddings)
 
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, use_cache)
 
         x = self.transformer.ln_f(x)
 
@@ -146,8 +147,6 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = config.n_head
         self.use_flash_attention = config.use_flash_attention
 
-        self.use_cache = config.use_cache
-
         self.register_buffer("cache_k", None)
         self.register_buffer("cache_v", None)
 
@@ -155,12 +154,12 @@ class MultiHeadAttention(nn.Module):
         self.cache_k = None
         self.cache_v = None
 
-    def forward(self, x):
+    def forward(self, x, use_cache=False):
         batch_size, sequence_length, _ = x.size()
 
         q, k, v = self.c_attention(x).split(self.n_embedding, dim=-1)
 
-        if self.use_cache:
+        if use_cache:
             if self.cache_k is None and self.cache_v is None:
                 self.cache_k = k
                 self.cache_v = v
@@ -218,8 +217,8 @@ class Block(nn.Module):
         self.ln_1 = LayerNormalization(config)
         self.ln_2 = LayerNormalization(config)
 
-    def forward(self, x):
-        x = x + self.attention(self.ln_1(x))
+    def forward(self, x, use_cache=False):
+        x = x + self.attention(self.ln_1(x), use_cache)
         x = x + self.mlp(self.ln_2(x))
         return x
 

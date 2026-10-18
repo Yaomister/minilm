@@ -2,11 +2,14 @@ import os
 import torch
 import logging
 import torch.distributed as dist
+from utils.common import get_device_type
 
 logger = logging.getLogger(__name__)
 
 
-def ddp(device="cuda"):
+def ddp(device=None):
+    if device is None:
+        device = get_device_type()
     assert device in ["cpu", "cuda", "mps"], "invalid device."
     if device == "cuda":
         assert torch.cuda.is_available(), "cuda is not available."

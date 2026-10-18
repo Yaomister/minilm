@@ -1,11 +1,11 @@
 import os
 import torch
+import logging
 import numpy as np
 from pathlib import Path
 from config import Config
 from utils.setup import ddp
 from torch.optim import AdamW
-from model.model import Model
 from utils.directories import (
     SFT_BIN_DATASET_DIR,
     SFT_BIN_VALIDATION_DATASET_DIR,
@@ -15,8 +15,12 @@ from utils.directories import (
 from argparse import ArgumentParser
 from data.tokenizer import Tokenizer
 from data.dataloader import DataLoader
-from utils.checkpoint import load_checkpoint
-from utils.common import tokenize_dataset, print0, get_device_type
+from utils.checkpoint import build_model
+from utils.common import tokenize_dataset, print0
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
 
 config = Config()
 can_use_ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = ddp()
@@ -26,23 +30,20 @@ master_process = ddp_rank == 0
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--checkpoint-dir", required=True)
-    parser.add_argument("--step", default=0)
+    # defaults to the latest step in the checkpoint directory
+    parser.add_argument("--step", type=int, default=None)
     return parser.parse_args()
 
 
 def sft(args):
 
-    model_data, optimizer_data, meta_data = load_checkpoint(
-        args.checkpoint_dir, args.step, True, device=get_device_type()
-    )
+    # the architecture comes from the checkpoint, the sft hyperparameters from config.py
+    model, _, meta_data = build_model(args.checkpoint_dir, args.step, device)
 
     tokenizer = Tokenizer()
 
-    model = Model(config)
-    model.load_state_dict(model_data)
-
+    # fresh optimizer, the pretraining checkpoint holds muon + adamw states that do not map onto this
     optimizer = torch.optim.AdamW(model.parameters)
-    optimizer.load_state_dict(optimizer_data)
 
     if not os.path.isfile(SFT_BIN_DATASET_DIR):
         tokenize_dataset(
@@ -58,14 +59,14 @@ def sft(args):
     train_loader = DataLoader(
         train_dataset,
         config.batch_size,
-        config.block_size,
+        model.block_size,
         ddp_rank,
         ddp_world_size,
     )
     validation_loader = DataLoader(
         validation_dataset,
         config.batch_size,
-        config.block_size,
+        model.block_size,
         ddp_rank,
         ddp_world_size,
     )

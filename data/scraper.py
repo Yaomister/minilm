@@ -1,6 +1,7 @@
 import json
 import requests
 from bs4 import BeautifulSoup
+from utils.directories import PRETRAINING_PAGES_DIR, PRETRAINING_RAW_DATASET_DIR
 
 headers = {"User-Agent": "llm/1.0"}
 
@@ -26,7 +27,7 @@ def scrape(topic):
 
 
 def save(extracted_text):
-    with open("data/datasets/text.txt", "w") as f:
+    with open(PRETRAINING_RAW_DATASET_DIR, "w") as f:
         f.write("".join(extracted_text))
 
 
@@ -34,7 +35,7 @@ if __name__ == "__main__":
 
     extracted_text = []
 
-    with open("data/pages.json", "r") as f:
+    with open(PRETRAINING_PAGES_DIR, "r") as f:
         pages = json.load(f)
         for topic in pages:
             extracted_text.append(scrape(topic))

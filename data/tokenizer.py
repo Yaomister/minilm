@@ -1,6 +1,7 @@
 import regex as re
 import json
 from config import Config
+from utils.directories import PRETRAINING_RAW_DATASET_DIR, PRETRAINING_MERGES_DIR
 from collections import Counter
 
 
@@ -121,7 +122,7 @@ if __name__ == "__main__":
 
     bpe = Tokenizer()
 
-    with open("data/datasets/text.txt", "r") as f:
+    with open(PRETRAINING_RAW_DATASET_DIR, "r") as f:
         text = f.read()
 
-    bpe.train(text, "data/merges.json")
+    bpe.train(text, PRETRAINING_MERGES_DIR)

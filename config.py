@@ -8,7 +8,7 @@ class Config:
     vocab_size: int = 50304
     n_head: int = 6
     block_size: int = 1024
-    d_k = 128
+    d_k: int = 128
     dropout: float = 0.1
     bias: bool = True
     n_layers: int = 12
@@ -30,7 +30,7 @@ class Config:
     accumulation_steps: int = 396
 
     # sft parameters
-    sft_epochs = 1000
+    sft_epochs: int = 1000
 
     # supervised fine-tuning
     step_to_start_from: int = 100

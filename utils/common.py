@@ -31,6 +31,13 @@ def get_device_type():
         return "cpu"
 
 
+def synchronize(device_type):
+    if device_type == "cuda":
+        torch.cuda.synchronize()
+    elif device_type == "mps":
+        torch.mps.synchronize()
+
+
 def get_peak_flops(device_name: str) -> float:
     name = device_name.lower()
 

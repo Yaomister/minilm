@@ -1,12 +1,15 @@
 import torch
-from model import Model
+import logging
 from config import Config
 from utils.setup import ddp
 from dataclasses import asdict
 from argparse import ArgumentParser
 from datasets import load_dataset
-from utils.common import get_device_type
-from utils.checkpoint import load_checkpoint
+from utils.checkpoint import build_model
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
 
 config = Config()
 can_use_ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = ddp()
@@ -28,7 +31,8 @@ def get_log_probabilities(policy, x, y):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--checkpoint-dir", required=True)
-    parser.add_argument("--step", default=0)
+    # defaults to the latest step in the checkpoint directory
+    parser.add_argument("--step", type=int, default=None)
     return parser.parse_args()
 
 
@@ -55,20 +59,15 @@ def calculate_advantage(responses):
 
 
 def run(args):
-    model_data, optimizer_data, _ = load_checkpoint(
-        args.checkpoint_dir, args.step, True, device=get_device_type()
-    )
-    reference = Model(config)
-    policy = Model(config)
-
-    reference.load_state_dict(model_data)
-    policy.load_state_dict(model_data)
+    # the architecture comes from the checkpoint, the grpo hyperparameters from config.py
+    reference, _, _ = build_model(args.checkpoint_dir, args.step, device)
+    policy, _, _ = build_model(args.checkpoint_dir, args.step, device)
 
     reference.eval()
     reference.requires_grad(True)
 
+    # fresh optimizer, the pretraining checkpoint holds muon + adamw states that do not map onto this
     optimizer = torch.optim.AdamW(policy.parameters, lr=1e-6)
-    optimizer.load_state_dict(optimizer_data)
 
     dataset = load_dataset()
 
@@ -105,7 +104,7 @@ def run(args):
             "model": policy.state_dict(),
             "epoch": epoch,
             "rng": torch.get_rng_state(),
-            "cuda_rng": torch.cuda.get_rng_state(),
+            "cuda_rng": torch.cuda.get_rng_state() if device == "cuda" else None,
             "optimizer": optimizer.state_dict(),
             "config": asdict(config),
             "best_loss": loss,
