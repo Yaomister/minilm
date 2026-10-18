@@ -26,7 +26,6 @@ master_process = ddp_rank == 0
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--checkpoint-dir", required=True)
-    parser.add_argument("--dataset-dir", required=True)
     parser.add_argument("--step", default=0)
     return parser.parse_args()
 

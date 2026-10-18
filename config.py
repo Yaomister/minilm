@@ -36,6 +36,12 @@ class Config:
     step_to_start_from: int = 100
     model_tag: str = "model.pt"
 
+    # RLHF
+    sample_group_size: int = 10
+    grpo_steps: int = 50
+    clip_epsilon: float = 0.2
+    kl_divergence_beta: float = 0.5
+
 
 def scale(depth):
     config = Config()
