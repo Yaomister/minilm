@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def ddp(device=None):
+    """Get the rank, world rank, and local rank for DDP."""
     if device is None:
         device = get_device_type()
     assert device in ["cpu", "cuda", "mps"], "invalid device."

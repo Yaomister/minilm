@@ -6,18 +6,27 @@ from dataclasses import dataclass
 
 
 class Model(nn.Module):
+    """The language model."""
+
     def __init__(self, config):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
+        # the embedding size
         self.n_embedding = config.n_embedding
+        # the number of transformer blocks
         self.block_size = config.block_size
+        # the number of attention heads per block
         self.n_head = config.n_head
+        # the number of layers
         self.n_layers = config.n_layers
+        # whether to use KV cache during generation
         self.use_cache = config.use_cache
+        # the last token is the end of sequence token
         self.eot_token_id = config.vocab_size - 1
         self.current_position = 0
 
+        # use a single tensor for the w_k, w_q, and w_v instead of three separate ones
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embedding),
@@ -31,6 +40,7 @@ class Model(nn.Module):
         self.lm_head = nn.Linear(config.n_embedding, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight
 
+        # initialize the weights to a gaussian distribution
         self.apply(self._init_weights)
 
         for pn, p in self.named_parameters():
@@ -46,6 +56,9 @@ class Model(nn.Module):
 
     @torch.no_grad()
     def generate(self, indexes, maximum_new_tokens):
+        """Generate tokens."""
+
+        # reset the KV values cached from previous generations
         self._reset_cache()
 
         if self.use_cache:
@@ -65,11 +78,13 @@ class Model(nn.Module):
         return indexes
 
     def estimate_flops(self):
+        """Estimate the number of flops used for generation."""
         # 2 for forward pass and 4 for backward pass per parameter, and 12 * number of layers * embedding size * block size
         parameters = sum(p.numel() for p in self.parameters())
         return 6 * parameters + 12 * self.n_embedding * self.block_size * self.n_layers
 
     def forward(self, x, targets=None, use_cache=False):
+        """A single forward pass."""
 
         _, sequence_length = x.size()
 
@@ -115,26 +130,33 @@ class Model(nn.Module):
 
 
 class LayerNormalization(nn.Module):
+    """Layer Normalization."""
+
     def __init__(self, config):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(config.n_embedding))
         self.bias = nn.Parameter(torch.zeros(config.n_embedding))
 
     def forward(self, x):
+        """A single forward pass."""
         mean = x.mean(-1, keepdim=True)
         var = x.var(-1, keepdim=True)
         return (x - mean) / torch.sqrt(var + 1e-5) * self.weight + self.bias
 
 
 class MultiHeadAttention(nn.Module):
+    """Multi-head attention block."""
+
     def __init__(self, config):
         super().__init__()
         assert config.n_embedding % config.n_head == 0
 
+        # the attention weights
         self.c_attention = nn.Linear(
             config.n_embedding, config.n_embedding * 3, bias=config.bias
         )
 
+        # the output projection of the attention layer
         self.c_proj = nn.Linear(
             config.n_embedding, config.n_embedding, bias=config.bias
         )
@@ -148,14 +170,16 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = config.n_head
         self.use_flash_attention = config.use_flash_attention
 
-        self.register_buffer("cache_k", None)
-        self.register_buffer("cache_v", None)
+        # for KV cache
+        self.cache_k = None
+        self.cache_v = None
 
     def _reset_cache(self):
         self.cache_k = None
         self.cache_v = None
 
     def forward(self, x, use_cache=False):
+        """A single forward pass"""
         batch_size, sequence_length, _ = x.size()
 
         q, k, v = self.c_attention(x).split(self.n_embedding, dim=-1)
@@ -215,6 +239,8 @@ class MultiHeadAttention(nn.Module):
 
 
 class Block(nn.Module):
+    """A transformer block."""
+
     def __init__(self, config):
         super().__init__()
         self.attention = MultiHeadAttention(config)
@@ -223,12 +249,15 @@ class Block(nn.Module):
         self.ln_2 = LayerNormalization(config)
 
     def forward(self, x, use_cache=False):
+        """A single forward pass."""
         x = x + self.attention(self.ln_1(x), use_cache)
         x = x + self.mlp(self.ln_2(x))
         return x
 
 
 class MLP(nn.Module):
+    """A MLP."""
+
     def __init__(self, config):
         super().__init__()
         self.fc1 = nn.Linear(config.n_embedding, config.n_embedding * 4)
@@ -237,6 +266,7 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
+        """A single forward pass."""
         x = self.fc1(x)
         x = self.gelu(x)
         x = self.fc2(x)

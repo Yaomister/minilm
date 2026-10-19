@@ -4,11 +4,14 @@ import numpy as np
 
 
 def print0(content="", **kwargs):
+    """Print only on the main node."""
     if int(os.environ.get("RANK", 0)) == 0:
         print(content)
 
 
 def tokenize_dataset(tokenizer, dir, training_dataset_dir, validation_dataset_dir):
+    """Tokenize the dataset."""
+
     with open(dir, "r") as f:
         raw_text = f.read()
 
@@ -23,6 +26,7 @@ def tokenize_dataset(tokenizer, dir, training_dataset_dir, validation_dataset_di
 
 
 def get_device_type():
+    """Gets the device type availble."""
     if torch.cuda.is_available():
         return "cuda"
     elif torch.backends.mps.is_available():
@@ -32,6 +36,7 @@ def get_device_type():
 
 
 def synchronize(device_type):
+    """Synchronize the device."""
     if device_type == "cuda":
         torch.cuda.synchronize()
     elif device_type == "mps":
@@ -39,6 +44,7 @@ def synchronize(device_type):
 
 
 def get_peak_flops(device_name: str) -> float:
+    """Get the maximum FLOPS used for the specific type of GPU."""
     name = device_name.lower()
 
     _PEAK_FLOPS_TABLE = (

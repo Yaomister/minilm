@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def save_checkpoint(dir, step, model_data, optimizer_data, meta_data, ddp_rank):
+    """Checkpointing training progress."""
     if ddp_rank == 0:
         os.makedirs(dir, exist_ok=True)
 
@@ -30,6 +31,7 @@ def save_checkpoint(dir, step, model_data, optimizer_data, meta_data, ddp_rank):
 
 
 def find_last_step(checkpoint_dir):
+    """Find the last training step that was saved."""
     checkpoint_files = [
         f for f in os.listdir(checkpoint_dir) if re.search(r"model_(\d+)\.pt$", f)
     ]
@@ -40,6 +42,7 @@ def find_last_step(checkpoint_dir):
 
 
 def build_model(checkpoint_dir, step, device, load_optimizer=False):
+    """Construct the model from the checkpointed metadata."""
     if step is None:
         step = find_last_step(checkpoint_dir)
 
@@ -56,6 +59,7 @@ def build_model(checkpoint_dir, step, device, load_optimizer=False):
 
 
 def load_checkpoint(dir, step, load_optimizer, device, ddp_rank=0):
+    """Load the checkpointed training progress."""
     model_path = os.path.join(dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
 

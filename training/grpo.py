@@ -23,18 +23,20 @@ PAD_ID = config.vocab_size - 1
 
 
 def load_dataset():
+    """Load the GSM8K dataset."""
     dataset = datasets.load_dataset("openai/gsm8k", "main", split="train")
     return dataset
 
 
 def get_log_probabilities(policy, x, y):
+    """Calculate the log probability of the logits."""
     # passing targets makes the model return logits for every position
     logits, _ = policy(x, y)
     log_probabilities = torch.log_softmax(logits.float(), dim=-1)
     return log_probabilities.gather(-1, y.unsqueeze(-1)).squeeze(-1)
 
 
-def parse_args():
+def _parse_args():
     parser = ArgumentParser()
     parser.add_argument("--checkpoint-dir", required=True)
     # defaults to the latest step in the checkpoint directory
@@ -43,14 +45,23 @@ def parse_args():
 
 
 def sample_group(policy, prompt_ids, G, max_new=256):
+    """Generate a group of responses."""
+
     prompt = prompt_ids.size(0)
     sequence = prompt_ids.unsqueeze(0).repeat(G, 1)
     done = torch.zeros(G, dtype=torch.bool, device=sequence.device)
+
+    # generate a group of responses
     for _ in range(min(max_new, policy.block_size - prompt)):
         logits, _ = policy(sequence)
+
+        # samples a response from the logits
         next = torch.multinomial(torch.nn.functional.softmax(logits, -1), 1).squeeze(1)
         next = torch.where(done, torch.full_like(next, PAD_ID), next)
+
+        # concat the generated next token to the original sequence
         sequence = torch.cat([sequence, next.unsqueeze(1)], dim=1)
+
         done |= next == PAD_ID
         if done.all():
             break
@@ -59,12 +70,16 @@ def sample_group(policy, prompt_ids, G, max_new=256):
 
 
 def extract_answer(text):
+    """Extract the answer for grading GSM8K"""
+
     # gsm8k answers end with "#### <number>"
     match = re.search(r"####\s*(-?[\d,]*\.?\d+)", text)
     return match.group(1).replace(",", "") if match else None
 
 
 def get_rewards(response, answer, tokenizer):
+    """Get the reward for calculating the advantage."""
+
     # 1 if the final answer matches, 0 otherwise
     rewards = [
         float(extract_answer(tokenizer.decode(r)) == extract_answer(answer))
@@ -73,11 +88,9 @@ def get_rewards(response, answer, tokenizer):
     return torch.tensor(rewards, device=response.device)
 
 
-def calculate_advantage(responses):
-    return torch.rand_like(responses)
+def grpo(args):
+    """Group Based Relative Optimization."""
 
-
-def run(args):
     # the architecture comes from the checkpoint, the grpo hyperparameters from config.py
     reference, _, _ = build_model(args.checkpoint_dir, args.step, device)
     policy, _, _ = build_model(args.checkpoint_dir, args.step, device)
@@ -96,19 +109,26 @@ def run(args):
     for epoch in range(config.grpo_steps):
         # each rank takes its own slice of the questions
         for row in dataset.shard(ddp_world_size, ddp_rank):
+
             prompt_ids = torch.tensor(
                 tokenizer.encode(f"Question: {row['question']}\nAnswer:"), device=device
             )[-(policy.block_size // 2) :]
             prompt = prompt_ids.size(0)
 
             with torch.no_grad():
+                # generate a group of answers
                 sequence = sample_group(policy, prompt_ids, config.sample_group_size)
+
+                # get their actual answer to the question
                 responses = sequence[:, prompt:]
+
+                # get the reward
                 rewards = get_rewards(responses, row["answer"], tokenizer)
 
                 reward_std = torch.std(rewards, dim=-1)
                 reward_mean = torch.mean(rewards, dim=-1)
 
+                # calculate the z-score
                 advantage = ((rewards - reward_mean) / (reward_std + 1e-8)).unsqueeze(1)
 
                 # x predicts y one token ahead, only the response tokens count in the loss
@@ -123,19 +143,25 @@ def run(args):
 
             new_logp = get_log_probabilities(policy, x, y)
             ratio = torch.exp(new_logp - old_logp)
+
+            # the surregate clips the advantage so a single policy update doesnt swing too much from the reference
             surregate = torch.min(
                 ratio * advantage,
                 torch.clip(ratio, 1 - config.clip_epsilon, 1 + config.clip_epsilon)
                 * advantage,
             )
+
             # k3 estimator of kl(policy || reference)
             log_ratio = ref_logp - new_logp
+
+            # so the new policy doesnt land too far from the reference
             kl_divergence = torch.exp(log_ratio) - log_ratio - 1
 
             loss = -(surregate - config.kl_divergence_beta * kl_divergence)
             loss = (loss * mask).sum() / mask.sum()
             loss.backward()
 
+            # update the policy
             optimizer.step()
             optimizer.zero_grad()
 
@@ -154,5 +180,5 @@ def run(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    run(args)
+    args = _parse_args()
+    grpo(args)

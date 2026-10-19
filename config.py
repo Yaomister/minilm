@@ -32,6 +32,8 @@ class Config:
 
     # sft parameters
     sft_epochs: int = 1000
+    sft_learning_rate: float = 3e-5
+    sft_accumulation_steps: int = 8
 
     # supervised fine-tuning
     step_to_start_from: int = 100
