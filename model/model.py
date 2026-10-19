@@ -13,8 +13,9 @@ class Model(nn.Module):
         self.n_embedding = config.n_embedding
         self.block_size = config.block_size
         self.n_head = config.n_head
+        self.n_layers = config.n_layers
         self.use_cache = config.use_cache
-        self.eot_token_id = config.vocab_size
+        self.eot_token_id = config.vocab_size - 1
         self.current_position = 0
 
         self.transformer = nn.ModuleDict(
@@ -33,9 +34,9 @@ class Model(nn.Module):
         self.apply(self._init_weights)
 
         for pn, p in self.named_parameters():
-            if pn.endswith("c_proj"):
+            if pn.endswith("c_proj.weight"):
                 torch.nn.init.normal_(
-                    p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer)
+                    p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layers)
                 )
 
     def _reset_cache(self):
@@ -48,11 +49,11 @@ class Model(nn.Module):
         self._reset_cache()
 
         if self.use_cache:
-            logits = self.forward(indexes[:, -self.block_size :], use_cache=True)
+            logits, _ = self.forward(indexes[:, -self.block_size :], use_cache=True)
             for _ in range(maximum_new_tokens):
                 next_index = logits.argmax(dim=-1, keepdim=True)
                 indexes = torch.cat([indexes, next_index], dim=1)
-                if next_index.item() == self.eot_token_id:
+                if (next_index == self.eot_token_id).all():
                     break
                 logits, _ = self.forward(next_index, use_cache=True)
         else:
@@ -66,7 +67,7 @@ class Model(nn.Module):
     def estimate_flops(self):
         # 2 for forward pass and 4 for backward pass per parameter, and 12 * number of layers * embedding size * block size
         parameters = sum(p.numel() for p in self.parameters())
-        return 6 * parameters + 12 * self.n_embedding * self.block_size * self.n_head
+        return 6 * parameters + 12 * self.n_embedding * self.block_size * self.n_layers
 
     def forward(self, x, targets=None, use_cache=False):
 
@@ -174,11 +175,11 @@ class MultiHeadAttention(nn.Module):
         mask = torch.triu(
             torch.ones(
                 sequence_length,
-                sequence_length,
+                k.size(1),
                 dtype=torch.bool,
-                device=attention.device,
+                device=x.device,
             ),
-            diagonal=1,
+            diagonal=(k.size(1) - sequence_length + 1),
         )
 
         # sawpping dimension 1 and 2 so the score calculated is per head, and you end with a tensor that is (sequence_length, d_k)
@@ -189,7 +190,11 @@ class MultiHeadAttention(nn.Module):
         if self.use_flash_attention:
             # PyTorch uses FlashAttention2
             y = F.scaled_dot_product_attention(
-                q, k, v, mask, self.dropout, is_causal=True
+                q,
+                k,
+                v,
+                attn_mask=~mask,
+                dropout_p=self.dropout if self.training else 0.0,
             )
         else:
             # (sequence_length, sequence_length)

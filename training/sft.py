@@ -41,9 +41,10 @@ def sft(args):
     model, _, meta_data = build_model(args.checkpoint_dir, args.step, device)
 
     tokenizer = Tokenizer()
+    tokenizer.load(SFT_MERGES_DIR)
 
     # fresh optimizer, the pretraining checkpoint holds muon + adamw states that do not map onto this
-    optimizer = torch.optim.AdamW(model.parameters)
+    optimizer = torch.optim.AdamW(model.parameters())
 
     if not os.path.isfile(SFT_BIN_DATASET_DIR):
         tokenize_dataset(
@@ -53,8 +54,8 @@ def sft(args):
             SFT_BIN_VALIDATION_DATASET_DIR,
         )
 
-    train_dataset = np.fromfile(SFT_BIN_DATASET_DIR, dtype=np.float16)
-    validation_dataset = np.fromfile(SFT_BIN_VALIDATION_DATASET_DIR, dtype=np.float16)
+    train_dataset = np.fromfile(SFT_BIN_DATASET_DIR, dtype=np.uint16)
+    validation_dataset = np.fromfile(SFT_BIN_VALIDATION_DATASET_DIR, dtype=np.uint16)
 
     train_loader = DataLoader(
         train_dataset,
@@ -74,13 +75,14 @@ def sft(args):
     for epoch in range(config.sft_epochs):
         for minibatch in range(config.accumulation_steps):
             x, y = train_loader.next_batch()
-            x, y = x.to_device(device), y.to_device(device)
+            x, y = x.to(device), y.to(device)
 
             logits, loss = model(x, y)
             loss = loss / config.accumulation_steps
-            loss.backwards()
+            loss.backward()
 
         optimizer.step()
+        optimizer.zero_grad()
 
 
 if __name__ == "__main__":

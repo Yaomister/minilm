@@ -23,10 +23,11 @@ class Config:
     learning_rate_warmup_epochs: int = 500
     learning_rate_decay_epochs: int = 4000
     evaluation_epochs: int = 1000
+    evaluation_intervals: int = 500
     training_epochs: int = 5000
     learning_rate: float = 3e-4
     minimum_learning_rate: float = 3e-5
-    weight_decay: int = 0.1
+    weight_decay: float = 0.1
     accumulation_steps: int = 396
 
     # sft parameters
@@ -44,10 +45,11 @@ class Config:
 
 
 def scale(depth):
+    """Scale the model parameters based on the number of layers."""
     config = Config()
     base_dimension = depth * config.aspect_ratio
     config.n_layers = depth
     # round it so its a multiple of d_k
-    config.n_embedding = (base_dimension + config.d_k - 1) // config.d_k
-    config.n_head = config.n_embedding // config.n_head
+    config.n_embedding = ((base_dimension + config.d_k - 1) // config.d_k) * config.d_k
+    config.n_head = config.n_embedding // config.d_k
     return config

@@ -73,6 +73,9 @@ class Tokenizer:
         for pair, id in merges.items():
             vocabulary[id] = vocabulary[pair[0]] + vocabulary[pair[1]]
 
+        for token, id in self.special_tokens.items():
+            vocabulary[id] = token.encode("utf-8")
+
         self.merges = merges
         self.vocabulary = vocabulary
 
@@ -110,10 +113,8 @@ class Tokenizer:
         text = []
 
         for id in ids:
-            if id in self.vocabulary:
-                text.append(self.vocabulary[id])
-            else:
-                raise ValueError(f"unknown token id: {id}")
+            # vocab_size is bigger than the learned vocabulary, a model can sample ids with no bytes
+            text.append(self.vocabulary.get(id, b""))
 
         return b"".join(text).decode("utf-8", errors="replace")
 

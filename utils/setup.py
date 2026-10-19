@@ -24,14 +24,16 @@ def ddp(device=None):
         torch.set_float32_matmul_precision("high")
 
     is_ddp_available, ddp_rank, ddp_local_rank, ddp_world_size = get_ddp_information()
+
     if is_ddp_available and device == "cuda":
         device_id = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device)
+        torch.cuda.set_device(device_id)
         dist.init_process_group(backend="nccl", device_id=device_id)
     else:
         device_id = torch.device(device)
 
     if ddp_rank == 0:
+        # only log for the main node
         logger.info(f"Distributed world size: {ddp_world_size}")
 
     return is_ddp_available, ddp_rank, ddp_local_rank, ddp_world_size, device

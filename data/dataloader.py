@@ -19,8 +19,10 @@ class DataLoader:
             buffer = self.tokens[self.current : self.current + length]
 
         x = buffer[:-1].view(self.batch_size, self.sequence_length)
+        # the y is always one off from x because we're predicting the next token
         y = buffer[1:].view(self.batch_size, self.sequence_length)
 
+        # increase the index for when we're grabbing the next sequence
         self.current += (length - 1) * self.world_size
 
         return x, y

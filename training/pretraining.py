@@ -31,12 +31,12 @@ logging.basicConfig(
 parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint-dir", default="checkpoints", required=False)
 parser.add_argument(
-    "--resume_from_checkpoint", type=bool, default=False, required=False
+    "--resume_from_checkpoint", action="store_true", required=False
 )
 # can only use fp8 precision on H100 GPUs or later
 parser.add_argument("--use-fp8", type=bool, default=False, required=False)
 # depth for autoscaling, just the number of layers in the model
-parser.add_argument("--use-fp8", type=bool, default=False, required=False)
+parser.add_argument("--depth", type=int, default=1, required=False)
 
 args = parser.parse_args()
 
@@ -55,20 +55,23 @@ model = torch.compile(model=model, dynamic=False)
 
 device_type = get_device_type()
 flops_per_token = raw_model.estimate_flops()
-peak_flops = get_peak_flops(device_type)
+peak_flops = get_peak_flops(
+    torch.cuda.get_device_name() if torch.cuda.is_available() else device_type
+)
 
 
 @torch.no_grad()
 def evaluate_loss(model, evaluation_loader):
     out = {}
     model.eval()
-    for dataset, dataset_dir in {
+    for dataset, _ in {
         "validation": PRETRAINING_BIN_DATASET_DIR,
         "training": PRETRAINING_BIN_VALIDATION_DATASET_DIR,
     }.items():
         losses = torch.zeros(config.evaluation_epochs)
         for i in range(config.evaluation_epochs):
             x, y = evaluation_loader.next_batch()
+            x, y = x.to(device), y.to(device)
             logits, loss = model(x, y)
             losses[i] = loss.item()
         out[dataset] = losses.mean()
@@ -86,7 +89,7 @@ def configure_optimizer(model):
         [{"params": to_not_decay, "weight_decay": 0}],
         lr=config.learning_rate,
         betas=(0.9, 0.95),
-        fused=True,
+        fused=device_type == "cuda",
     )
 
     muon = Muon(
@@ -124,7 +127,12 @@ if __name__ == "__main__":
     tokenizer.load(PRETRAINING_MERGES_DIR)
 
     if not os.path.isfile(PRETRAINING_BIN_DATASET_DIR):
-        tokenize_dataset(PRETRAINING_RAW_DATASET_DIR)
+        tokenize_dataset(
+            tokenizer,
+            PRETRAINING_RAW_DATASET_DIR,
+            PRETRAINING_BIN_DATASET_DIR,
+            PRETRAINING_BIN_VALIDATION_DATASET_DIR,
+        )
 
     train_data = np.fromfile(PRETRAINING_BIN_DATASET_DIR, dtype=np.uint16)
     val_data = np.fromfile(PRETRAINING_BIN_VALIDATION_DATASET_DIR, dtype=np.uint16)
@@ -192,7 +200,7 @@ if __name__ == "__main__":
         t1 = time.time()
         synchronize(device_type)
 
-        dt = t0 - t1
+        dt = t1 - t0
         total_training_time += dt
 
         tokens_per_step = (
@@ -212,7 +220,7 @@ if __name__ == "__main__":
             f"epoch {epoch:05d} | loss {loss:.4f} | dt {dt*1000:.1f}ms | token/s {tokens_per_second:,.0f} | mfu {mfu:.1f}%"
         )
 
-        if (epoch + 1) % config.evaluation_epochs == 0:
+        if (epoch + 1) % config.evaluation_intervals == 0:
             losses = evaluate_loss(model, evaluation_loader)
             print0(
                 f"epoch {epoch} | train {losses['training']:.4f} | val {losses['validation']:.4f}"
@@ -220,7 +228,7 @@ if __name__ == "__main__":
 
         # every rank has to call this on the same steps, since each rank saves its own optimizer state
         is_last_epoch = epoch == config.training_epochs - 1
-        if (epoch + 1) % config.evaluation_epochs == 0 or is_last_epoch:
+        if (epoch + 1) % config.evaluation_intervals == 0 or is_last_epoch:
             save_checkpoint(
                 args.checkpoint_dir,
                 epoch,

@@ -13,6 +13,9 @@ def scrape(topic):
     ).text
 
     body = BeautifulSoup(html, "html.parser").select_one("div.mw-parser-output")
+    if body is None:
+        print(f"no page found for {topic}, skipping")
+        return ""
 
     for tag in body.select(
         "sup.reference, .reflist, .navbox, table, .mw-editsection, style, .hatnote, .thumb"
