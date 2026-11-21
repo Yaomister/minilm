@@ -1,3 +1,5 @@
+"""Pretraining the language model."""
+
 import os
 import math
 import time
@@ -29,25 +31,23 @@ logging.basicConfig(
 )
 
 parser = argparse.ArgumentParser()
+
 parser.add_argument("--checkpoint-dir", default="checkpoints", required=False)
-parser.add_argument(
-    "--resume_from_checkpoint", action="store_true", required=False
-)
-# can only use fp8 precision on H100 GPUs or later
-parser.add_argument("--use-fp8", type=bool, default=False, required=False)
+parser.add_argument("--resume_from_checkpoint", action="store_true", required=False)
 # depth for autoscaling, just the number of layers in the model
-parser.add_argument("--depth", type=int, default=1, required=False)
+parser.add_argument("--depth", type=int, default=12, required=False)
 
 args = parser.parse_args()
 
+# ddp
 can_use_ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = ddp()
 master_process = ddp_rank == 0
-
 
 config = scale(args.depth)
 
 model = Model(config).to(device)
-# keep a handle on the plain model so its state dict has no ddp / compile prefixes
+
+# keep a handle on the plain model so its state dict has no ddp
 raw_model = model
 if can_use_ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
@@ -64,15 +64,15 @@ peak_flops = get_peak_flops(
 def evaluate_loss(model, evaluation_loader):
     out = {}
     model.eval()
-    for dataset, _ in {
-        "validation": PRETRAINING_BIN_DATASET_DIR,
-        "training": PRETRAINING_BIN_VALIDATION_DATASET_DIR,
+    for dataset, loader in {
+        "validation": evaluation_loader,
+        "training": train_loader,
     }.items():
         losses = torch.zeros(config.evaluation_epochs)
         for i in range(config.evaluation_epochs):
-            x, y = evaluation_loader.next_batch()
+            x, y = loader.next_batch()
             x, y = x.to(device), y.to(device)
-            logits, loss = model(x, y)
+            _, loss = model(x, y)
             losses[i] = loss.item()
         out[dataset] = losses.mean()
 
@@ -81,21 +81,36 @@ def evaluate_loss(model, evaluation_loader):
 
 
 def configure_optimizer(model):
-    # we only want to add weight decay to the weights not the biases
-    to_decay = [p for p in model.parameters() if p.dim() >= 2]
-    to_not_decay = [p for p in model.parameters() if p.dim() < 2]
+    # muon is only for the hidden weight matrices, the embeddings (wte is tied to lm_head),
+    # biases and layernorm parameters go to adamw
+    matrices, embeddings, others = [], [], []
+    for name, p in model.named_parameters():
+        if "wte" in name or "wpe" in name:
+            embeddings.append(p)
+        elif p.dim() == 2:
+            matrices.append(p)
+        else:
+            others.append(p)
 
     adam = AdamW(
-        [{"params": to_not_decay, "weight_decay": 0}],
+        [
+            {"params": embeddings, "weight_decay": 0},
+            {"params": others, "weight_decay": 0},
+        ],
         lr=config.learning_rate,
         betas=(0.9, 0.95),
         fused=device_type == "cuda",
     )
 
     muon = Muon(
-        [{"params": to_decay, "weight_decay": config.weight_decay}],
-        lr=config.learning_rate,
+        [{"params": matrices, "weight_decay": config.weight_decay}],
+        lr=config.muon_learning_rate,
     )
+
+    # the schedule scales each group's own base learning rate
+    for optimizer in (muon, adam):
+        for g in optimizer.param_groups:
+            g["initial_lr"] = g["lr"]
 
     return [muon, adam]
 
@@ -144,7 +159,7 @@ if __name__ == "__main__":
         val_data, config.batch_size, config.block_size, ddp_rank, ddp_world_size
     )
 
-    optimizers = configure_optimizer(model)
+    optimizers = configure_optimizer(raw_model)
 
     if args.resume_from_checkpoint:
         last_step = find_last_step(args.checkpoint_dir)
@@ -162,11 +177,12 @@ if __name__ == "__main__":
 
     for epoch in range(starting_epoch, config.training_epochs):
         print0(f"epoch {epoch}")
-        current_learning_rate = get_learning_rate(epoch)
+        # the schedule is defined in adamw terms, apply it as a multiplier so muon keeps its own scale
+        lr_multiplier = get_learning_rate(epoch) / config.learning_rate
 
         for optimizer in optimizers:
             for g in optimizer.param_groups:
-                g["lr"] = current_learning_rate
+                g["lr"] = g["initial_lr"] * lr_multiplier
 
         synchronize(device_type)
         t0 = time.time()
@@ -197,8 +213,8 @@ if __name__ == "__main__":
         for optimizer in optimizers:
             optimizer.step()
 
-        t1 = time.time()
         synchronize(device_type)
+        t1 = time.time()
 
         dt = t1 - t0
         total_training_time += dt
@@ -217,7 +233,7 @@ if __name__ == "__main__":
         )
 
         print0(
-            f"epoch {epoch:05d} | loss {loss:.4f} | dt {dt*1000:.1f}ms | token/s {tokens_per_second:,.0f} | mfu {mfu:.1f}%"
+            f"epoch {epoch:05d} | loss {loss.item() * config.accumulation_steps:.4f} | dt {dt*1000:.1f}ms | token/s {tokens_per_second:,.0f} | mfu {mfu:.1f}%"
         )
 
         if (epoch + 1) % config.evaluation_intervals == 0:

@@ -32,6 +32,8 @@ def ddp(device=None):
         dist.init_process_group(backend="nccl", device_id=device_id)
     else:
         device_id = torch.device(device)
+        # no process group was created, so wrapping in DDP would crash
+        is_ddp_available = False
 
     if ddp_rank == 0:
         # only log for the main node

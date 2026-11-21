@@ -1,9 +1,11 @@
+"""Gather the dataset by scraping random Wikipedia pages."""
+
 import json
 import requests
 from bs4 import BeautifulSoup
 from utils.directories import PRETRAINING_PAGES_DIR, PRETRAINING_RAW_DATASET_DIR
 
-# Wikipedia API excepts this header
+# Wikipedia API expects this header
 headers = {"User-Agent": "llm/1.0"}
 
 

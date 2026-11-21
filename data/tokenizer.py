@@ -1,3 +1,5 @@
+"""Byte-Pair Encoding style tokenizer."""
+
 import json
 import regex as re
 from config import Config
@@ -6,7 +8,7 @@ from utils.directories import PRETRAINING_RAW_DATASET_DIR, PRETRAINING_MERGES_DI
 
 
 class Tokenizer:
-    """BPE Tokenizer."""
+    """The Tokenizer."""
 
     def __init__(self):
         self.vocabulary = None
@@ -33,10 +35,12 @@ class Tokenizer:
         # start from 256 and keep merging till the vocab size
         for new_id in range(256, Config.vocab_size - 1):
             counts = Counter()
+            # count the most common pairs
             for chunk in chunks:
                 for pair in zip(chunk, chunk[1:]):
                     counts[pair] += 1
 
+            # when theres nothing left to merge
             if not counts:
                 break
 
@@ -54,7 +58,8 @@ class Tokenizer:
             if new_id % 100 == 0:
                 print(f"training up to token {new_id}")
 
-        json.dump({f"{a},{b}": v for (a, b), v in merges.items()}, open(save_path, "w"))
+        with open(save_path, "w", encoding="utf-8") as file:
+            json.dump({f"{a},{b}": v for (a, b), v in merges.items()}, file)
 
     def _merge(self, chunk, to_merge, new_id):
         new_chunk = []
@@ -78,12 +83,14 @@ class Tokenizer:
     def load(self, load_path):
         """Load the trained tokenizer merges."""
         # already saved in order
-        with open(load_path, "r", encoding="utf-8") as f:
-            raw_merges = json.loads(f.read())
+        with open(load_path, "r", encoding="utf-8") as file:
+            raw_merges = json.loads(file.read())
             merges = {tuple(map(int, k.split(","))): v for k, v in raw_merges.items()}
 
+        # the 256 are the defaul byte values in utf-8 encoding
         vocabulary = {i: bytes([i]) for i in range(256)}
 
+        # save it to the vocabulary
         for pair, id in merges.items():
             vocabulary[id] = vocabulary[pair[0]] + vocabulary[pair[1]]
 
@@ -95,9 +102,11 @@ class Tokenizer:
 
     def encode(self, text):
         """Turn text into tokens."""
+
         assert self.merges is not None
         pattern = "(" + "|".join(re.escape(s) for s in self.special_tokens) + ")"
         ids = []
+
         for part in re.split(pattern, text):
             if part in self.special_tokens:
                 ids.append(self.special_tokens[part])
@@ -138,9 +147,9 @@ class Tokenizer:
 
 if __name__ == "__main__":
 
-    bpe = Tokenizer()
+    tokenizer = Tokenizer()
 
     with open(PRETRAINING_RAW_DATASET_DIR, "r", encoding="utf-8") as f:
         text = f.read()
 
-    bpe.train(text, PRETRAINING_MERGES_DIR)
+    tokenizer.train(text, PRETRAINING_MERGES_DIR)

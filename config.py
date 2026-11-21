@@ -27,6 +27,8 @@ class Config:
     training_epochs: int = 5000
     learning_rate: float = 3e-4
     minimum_learning_rate: float = 3e-5
+    # muon needs a much larger learning rate than adamw
+    muon_learning_rate: float = 0.02
     weight_decay: float = 0.1
     accumulation_steps: int = 396
 

@@ -1,3 +1,5 @@
+"""The GPT-syle langauge model."""
+
 import math
 import torch
 from torch import nn
@@ -24,6 +26,7 @@ class Model(nn.Module):
         self.use_cache = config.use_cache
         # the last token is the end of sequence token
         self.eot_token_id = config.vocab_size - 1
+
         self.current_position = 0
 
         # use a single tensor for the w_k, w_q, and w_v instead of three separate ones
@@ -68,10 +71,13 @@ class Model(nn.Module):
                 indexes = torch.cat([indexes, next_index], dim=1)
                 if (next_index == self.eot_token_id).all():
                     break
+                # the position embedding table only has block_size entries
+                if self.current_position >= self.block_size:
+                    break
                 logits, _ = self.forward(next_index, use_cache=True)
         else:
             for _ in range(maximum_new_tokens):
-                logits, _ = self.forward(indexes)
+                logits, _ = self.forward(indexes[:, -self.block_size :])
                 next_index = logits.argmax(dim=-1, keepdim=True)
                 indexes = torch.concat([indexes, next_index], dim=1)
 

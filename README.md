@@ -1,16 +1,15 @@
 # MiniLM
 
-A small GPT-2 style language model built from scratch in PyTorch, covering the full pipeline: data collection, tokenization, pretraining, supervised fine-tuning, and RL with GRPO.
+A small GPT-2 style language model built from scratch using PyTorch, covering the full pipeline: data collection, tokenization, pretraining, supervised fine-tuning, and RL with GRPO.
 
 ## Features
 
-- **Model**: decoder-only transformer with tied embeddings, KV cache for generation, optional flash attention, and depth-based autoscaling (`config.scale`)
+- **Model**: decoder-only transformer with KV cache for generation, optional flash attention, and depth-based autoscaling (`config.scale`)
 - **Tokenizer**: byte-level BPE trained from scratch, using a GPT-4 style split regex
 - **Data**: Wikipedia scraper that builds the raw text corpus
 - **Pretraining**: DDP + `torch.compile`, Muon for weight matrices and AdamW for everything else, warmup + cosine LR schedule, gradient accumulation, MFU tracking, optional FP8
 - **SFT**: fine-tunes from a pretraining checkpoint
-- **GRPO**: group-relative policy optimization on GSM8K, with clipping and a KL penalty
-- **Checkpointing**: save and resume model, optimizer, and metadata
+- **GRPO**: group-relative policy optimization on GSM8K
 
 ## Project structure
 
@@ -19,8 +18,8 @@ config.py            model and training hyperparameters
 model/               transformer and reward model
 data/                scraper, BPE tokenizer, dataloader, datasets
 training/            pretraining.py, sft.py, grpo.py
-utils/               checkpointing, DDP setup, helpers
-scripts/run.sh       SLURM job script (single A100)
+utils/               checkpointing, DDP setup, misc
+scripts/run.sh       SLURM job script
 ```
 
 ## Usage
