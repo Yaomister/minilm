@@ -5,7 +5,8 @@ from dataclasses import dataclass
 class Config:
     n_embedding: int = 768
     batch_size: int = 4
-    vocab_size: int = 50304
+    # vocab_size: int = 50304
+    vocab_size: int = 5000
     n_head: int = 6
     block_size: int = 1024
     d_k: int = 128
