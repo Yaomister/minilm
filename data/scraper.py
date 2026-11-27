@@ -1,20 +1,35 @@
 """Gather the dataset by scraping random Wikipedia pages."""
 
+import time
 import json
 import requests
 from bs4 import BeautifulSoup
 from utils.directories import PRETRAINING_PAGES_DIR, PRETRAINING_RAW_DATASET_DIR
 
 # Wikipedia API expects this header
-headers = {"User-Agent": "llm/1.0"}
+headers = {"User-Agent": "minilm/1.0"}
+
+
+def fetch(url, retries=5, wait=120):
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response.text
+        except requests.exceptions.ConnectionError:
+            pass
+        print(f"failed, waiting {wait}s (attempt {attempt}/{retries})")
+        time.sleep(wait)
+    return None
 
 
 def scrape(topic):
     """Scrape the text from the given Wikipedia page."""
     print(f"scraping {topic}")
-    html = requests.get(
-        f'https://en.wikipedia.org/wiki/{topic.replace(" ", "_")}', headers=headers
-    ).text
+    html = fetch(f'https://en.wikipedia.org/wiki/{topic.replace(" ", "_")}')
+    if html is None:
+        print(f"skipped {topic}")
+        return ""
 
     # ge the raw html
     body = BeautifulSoup(html, "html.parser").select_one("div.mw-parser-output")
